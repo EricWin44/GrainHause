@@ -1,0 +1,8 @@
+numpy>=1.26
+scipy>=1.11
+rawpy>=0.21
+tifffile>=2024.1.30
+imagecodecs>=2024.1.1
+Pillow>=10.1
+PySide6>=6.6
+pillow-heif>=0.18
