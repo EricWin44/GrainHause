@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { SegmentedSlider } from "@/components/ui/progress-bar";
+import { SelectMenu } from "@/components/ui/select-1";
 
 type Props = {
   label: string;
@@ -31,7 +33,6 @@ export function Slider({ label, lo, hi, value, def, step = 1, decimals = 0, suff
     if (Number.isFinite(n)) onChange(Math.min(hi, Math.max(lo, n)));
     else setText(fmt(v, decimals));
   };
-  const pct = ((v - lo) / (hi - lo)) * 100;
   return (
     <div className="slider" title={title}>
       <div className="slider-top">
@@ -55,24 +56,14 @@ export function Slider({ label, lo, hi, value, def, step = 1, decimals = 0, suff
         <button className="reset-btn" disabled={!changed} onClick={onReset} title={`Reset ${label.toLowerCase()}`}
                 aria-label={`Reset ${label}`}>↺</button>
       </div>
-      <input
-        type="range"
-        min={lo}
-        max={hi}
-        step={step}
-        value={v}
-        style={{ "--pct": `${pct}%` } as React.CSSProperties}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        onKeyDown={(e) => e.stopPropagation()}
-        aria-label={label}
-      />
+      <SegmentedSlider label={label} lo={lo} hi={hi} step={step} value={v} onChange={onChange} />
     </div>
   );
 }
 
-export function Section({ title, onReset, children }: { title: string; onReset?: () => void; children: React.ReactNode }) {
+export function Section({ id, title, onReset, children }: { id?: string; title: string; onReset?: () => void; children: React.ReactNode }) {
   return (
-    <section className="section">
+    <section id={id} className="section">
       <div className="section-head">
         <h3>{title}</h3>
         {onReset && <button className="section-reset" onClick={onReset} title={`Reset everything in ${title}`}>Reset</button>}
@@ -95,9 +86,12 @@ export function Select<T extends string>({ value, options, onChange, disabled, t
   value: T; options: [T, string][]; onChange: (v: T) => void; disabled?: boolean; title?: string;
 }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value as T)} disabled={disabled} title={title}
-            onKeyDown={(e) => e.stopPropagation()}>
-      {options.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-    </select>
+    <SelectMenu
+      value={value}
+      options={options.map(([itemValue, label]) => ({ value: itemValue, label }))}
+      onChange={onChange}
+      disabled={disabled}
+      title={title}
+    />
   );
 }

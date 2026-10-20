@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { AppSidebar } from "@/components/AppSidebar";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { cropBox, Engine, pyRound, PRIO, Stale, workerCount, type Header, type Info, type RGB } from "./engine/engine";
 import { isSupported } from "./engine/raw";
 import { clone, type Curve, type Settings, type SettingKey } from "./types";
@@ -10,6 +12,9 @@ import { histogram, HistogramView, type Hist } from "./components/Histogram";
 import { PreviewView, type Mode, type PreviewHandle } from "./components/PreviewView";
 import { kindLabel, StockGrid, type Filter } from "./components/StockGrid";
 import { Swatch, type SwatchHandle, type SwatchImage } from "./components/Swatch";
+import { Filmstrip, type SortMode } from "./components/Filmstrip";
+import { DevelopUpload } from "./components/DevelopUpload";
+import { Plus } from "lucide-react";
 
 // ------------------------------------------------------------------ constants (as the desktop app)
 
@@ -82,6 +87,8 @@ type Photo = {
   undo: Settings[];
   redo: Settings[];
   thumbUrl: string | null;
+  added: number;
+  rating: number;
   header?: Header;
   after?: { bmp: ImageBitmap; rgb: RGB };
   before?: { bmp: ImageBitmap; rgb: RGB; key: string };
@@ -138,13 +145,15 @@ export default function App() {
   const [progress, setProgress] = useState<Progress>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; ids: string[] } | null>(null);
   const [help, setHelp] = useState(false);
-  const [panelTab, setPanelTab] = useState<"edit" | "photos">("edit");
+  const [sort, setSort] = useState<SortMode>("newest");
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const sortRef = useRef<SortMode>("newest");
+  const [activeSection, setActiveSection] = useState("film-stock");
+  const panelRef = useRef<HTMLDivElement>(null);
   const exportDir = useRef<FileSystemDirectoryHandle | null>(null);
 
   const view = useRef<PreviewHandle>(null);
   const swatchView = useRef<SwatchHandle>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const folderInput = useRef<HTMLInputElement>(null);
 
   // render bookkeeping (refs: it changes far faster than React should re-render)
   const R = useRef({
@@ -199,17 +208,21 @@ export default function App() {
       .then(async (inf) => {
         infoRef.current = inf;
         setInfo(inf);
-        const [stored, session, pre, pf] = await Promise.all([
+        const [stored, session, pre, pf, savedSort] = await Promise.all([
           photosDb.all(), kv.get<{ ids: string[]; current: string | null }>("session", { ids: [], current: null }),
           kv.get<Record<string, Settings>>("presets", {}), kv.get<Prefs>("prefs", DEFAULT_PREFS),
+          kv.get<SortMode>("sort", "newest"),
         ]);
         exportDir.current = await kv.get<FileSystemDirectoryHandle | null>("exportDir", null);
         setPresets(pre);
         prefsRef.current = { ...DEFAULT_PREFS, ...pf };
         setPrefsState(prefsRef.current);
+        sortRef.current = savedSort;
+        setSort(savedSort);
         const order = new Map(session.ids.map((id, i) => [id, i]));
         stored.sort((a, b) => (order.get(a.id) ?? 1e9) - (order.get(b.id) ?? 1e9) || a.added - b.added);
         photos.current = stored.map(fromStored);
+        if (!photos.current.length) setUploadOpen(true);
         const s0 = clone(inf.defaults);
         sRef.current = s0;
         setS(s0);
@@ -225,6 +238,7 @@ export default function App() {
   const fromStored = (p: StoredPhoto): Photo => ({
     id: p.id, name: p.name, file: p.file, size: p.size, lastModified: p.lastModified, settings: p.settings,
     committed: null, undo: [], redo: [], thumbUrl: p.thumb ? URL.createObjectURL(p.thumb) : null,
+    added: p.added ?? 0, rating: p.rating ?? 0,
   });
 
   const saveSession = () => kv.set("session", { ids: photos.current.map((p) => p.id), current: curId.current });
@@ -245,7 +259,7 @@ export default function App() {
         continue;
       }
       const id = crypto.randomUUID();
-      const sp: StoredPhoto = { id, name: f.name, type: f.type, size: f.size, lastModified: f.lastModified, file: f, settings: null, thumb: null, added: Date.now() };
+      const sp: StoredPhoto = { id, name: f.name, type: f.type, size: f.size, lastModified: f.lastModified, file: f, settings: null, thumb: null, added: Date.now(), rating: 0 };
       await photosDb.put(sp);
       photos.current.push(fromStored(sp));
       first ??= id;
@@ -258,7 +272,8 @@ export default function App() {
 
   const removePhotos = async (ids: string[]) => {
     const wasCurrent = ids.includes(curId.current ?? "");
-    const idx = photos.current.findIndex((p) => p.id === curId.current);
+    const list = orderedPhotos();
+    const idx = list.findIndex((p) => p.id === curId.current);
     for (const id of ids) {
       const p = photos.current.find((x) => x.id === id);
       if (p?.thumbUrl) URL.revokeObjectURL(p.thumbUrl);
@@ -269,7 +284,7 @@ export default function App() {
     setSelected(new Set());
     bump();
     if (wasCurrent) {
-      const next = photos.current[Math.min(Math.max(0, idx), photos.current.length - 1)];
+      const next = orderedPhotos()[Math.min(Math.max(0, idx), orderedPhotos().length - 1)];
       if (next) selectPhoto(next.id);
       else {
         curId.current = null;
@@ -1055,10 +1070,38 @@ export default function App() {
     later("thumbs", 700, renderStockThumbs);
   };
 
+  const orderedPhotos = () => {
+    const list = [...photos.current];
+    const mode = sortRef.current;
+    const byName = (a: Photo, b: Photo) => a.name.localeCompare(b.name, undefined, { numeric: true });
+    list.sort((a, b) => {
+      if (mode === "oldest") return a.added - b.added || byName(a, b);
+      if (mode === "az") return byName(a, b);
+      if (mode === "rating") return b.rating - a.rating || b.added - a.added || byName(a, b);
+      return b.added - a.added || byName(a, b);
+    });
+    return list;
+  };
+
+  const chooseSort = (mode: SortMode) => {
+    sortRef.current = mode;
+    setSort(mode);
+    kv.set("sort", mode);
+  };
+
+  const ratePhoto = (id: string, rating: number) => {
+    const p = photos.current.find((x) => x.id === id);
+    if (!p) return;
+    const next = p.rating === rating ? 0 : rating;
+    p.rating = next;
+    bump();
+    photosDb.patch(id, { rating: next });
+  };
+
   // ------------------------------------------------------------------ keyboard & drag-and-drop
   const keys = useRef<(e: KeyboardEvent, down: boolean) => void>(() => {});
   keys.current = (e, down) => {
-    if (!info || !sRef.current) return;
+    if (!info || !sRef.current || uploadOpen) return;
     const t = e.target as HTMLElement;
     const typing = t && (t.tagName === "INPUT" && (t as HTMLInputElement).type !== "range" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
     if (e.key === "\\") {
@@ -1072,7 +1115,7 @@ export default function App() {
     const k = e.key.toLowerCase();
     if (mod) {
       const act: Record<string, () => void> = {
-        s: quickSave, o: () => (e.shiftKey ? folderInput : fileInput).current?.click(),
+        s: quickSave, o: () => setUploadOpen(true),
         e: () => exportPhotos(e.shiftKey ? "selected" : "current"),
         z: () => stepHistory(!e.shiftKey), y: () => stepHistory(false),
         c: () => e.shiftKey && copySettings(), v: () => e.shiftKey && pasteSettings(),
@@ -1095,11 +1138,17 @@ export default function App() {
     if (e.key === "Enter" && modeRef.current === "crop") return toggleCrop(false);
     if (k === "c" && current()) return showCompare(!compareRef.current);
     if (k === "z" && current()) return view.current?.setZoom(view.current.view().zoom !== null ? null : 1.0);
+    if (k >= "1" && k <= "5" && curId.current) {
+      e.preventDefault();
+      ratePhoto(curId.current, Number(k));
+      return;
+    }
     if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.key) && photos.current.length && t?.tagName !== "INPUT") {
       e.preventDefault();
-      const i = photos.current.findIndex((p) => p.id === curId.current);
-      const j = e.key === "ArrowRight" || e.key === "ArrowDown" ? Math.min(i + 1, photos.current.length - 1) : Math.max(i - 1, 0);
-      if (photos.current[j]) selectPhoto(photos.current[j].id);
+      const list = orderedPhotos();
+      const i = list.findIndex((p) => p.id === curId.current);
+      const j = e.key === "ArrowRight" || e.key === "ArrowDown" ? Math.min(i + 1, list.length - 1) : Math.max(i - 1, 0);
+      if (list[j]) selectPhoto(list[j].id);
     }
   };
   useEffect(() => {
@@ -1174,7 +1223,7 @@ export default function App() {
   // ------------------------------------------------------------------ list interaction
   const clickPhoto = (e: React.MouseEvent, id: string) => {
     if (e.shiftKey && anchor.current) {
-      const ids = photos.current.map((p) => p.id);
+      const ids = orderedPhotos().map((p) => p.id);
       const [i, j] = [ids.indexOf(anchor.current), ids.indexOf(id)].sort((a, b) => a - b);
       setSelected(new Set(ids.slice(i, j + 1)));
       return;
@@ -1203,6 +1252,21 @@ export default function App() {
     return Object.entries(info.grain_presets).find(([, v]) => v.every((x, i) => Math.abs(cur[i] - x) < 0.5))?.[0] ?? "";
   }, [info, st]);
 
+  useEffect(() => {
+    const root = panelRef.current;
+    if (!root) return;
+    const sections = [...root.querySelectorAll<HTMLElement>("section[id]")];
+    if (!sections.length) return;
+    const io = new IntersectionObserver((entries) => {
+      const hit = entries
+        .filter((e) => e.isIntersecting)
+        .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (hit) setActiveSection(hit.target.id);
+    }, { root, rootMargin: "0px 0px -75% 0px", threshold: 0 });
+    sections.forEach((section) => io.observe(section));
+    return () => io.disconnect();
+  }, [info]);
+
   if (!info || !st || !stock) {
     return (
       <div className="boot">
@@ -1229,49 +1293,32 @@ export default function App() {
   const sec = (title: string) => SECTION_FIELDS[title] ? () => resetFields(SECTION_FIELDS[title]) : undefined;
   const busyCount = engine.current?.pool.readyCount ?? 0;
 
-  return (
-    <div className={`app ${panelTab}`}>
-      {/* ---------------- left: photos */}
-      <aside className="left">
-        <div className="brand-row">
-          <img src="/icon.png" alt="" width={34} height={34} />
-          <span className="brand">GRAINHAUSE</span>
-          <button className="icon-btn" onClick={() => setHelp(true)} title="Help & shortcuts" aria-label="Help">?</button>
-        </div>
-        <div className="row">
-          <button onClick={() => fileInput.current?.click()} title={`Open photos (${MOD}O)`}>Open…</button>
-          <button onClick={() => folderInput.current?.click()} title={`Open a folder (${MOD}⇧O)`}>Folder…</button>
-        </div>
-        <input ref={fileInput} type="file" multiple hidden
-               accept="image/*,.dng,.cr2,.cr3,.nef,.arw,.raf,.orf,.rw2,.pef,.srw,.3fr,.iiq,.rwl,.nrw,.erf,.kdc,.dcr,.mos,.mrw,.x3f,.heic,.heif,.hif,.tif,.tiff"
-               onChange={(e) => { addFiles([...(e.target.files ?? [])]); e.target.value = ""; }} />
-        <input ref={folderInput} type="file" multiple hidden {...{ webkitdirectory: "", directory: "" } as any}
-               onChange={(e) => { addFiles([...(e.target.files ?? [])]); e.target.value = ""; }} />
-        <div className="filmstrip" onContextMenu={(e) => e.preventDefault()}>
-          {photos.current.length === 0 && <div className="empty">Drop photos or a folder anywhere, or use Open…</div>}
-          {photos.current.map((p) => (
-            <button key={p.id}
-                    className={`strip-item${p.id === currentId ? " current" : ""}${selected.has(p.id) ? " selected" : ""}`}
-                    onClick={(e) => clickPhoto(e, p.id)}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      const ids = selected.has(p.id) ? [...selected] : [p.id];
-                      if (!selected.has(p.id)) setSelected(new Set([p.id]));
-                      setMenu({ x: e.clientX, y: e.clientY, ids });
-                    }}
-                    title={p.error ? `${p.name} — ${p.error}` : p.name}>
-              <div className="strip-thumb">
-                {p.thumbUrl ? <img src={p.thumbUrl} alt="" /> : <span className="ph">{p.error ? "!" : ""}</span>}
-              </div>
-              <span className="strip-name">{p.name}</span>
-            </button>
-          ))}
-        </div>
-      </aside>
+  const selectSection = (id: string) => {
+    setActiveSection(id);
+    const section = document.getElementById(id);
+    const panel = panelRef.current;
+    if (!section || !panel) return;
+    const top = section.getBoundingClientRect().top - panel.getBoundingClientRect().top + panel.scrollTop;
+    panel.scrollTo({ top: Math.max(0, top - 8), behavior: "smooth" });
+  };
 
+  return (
+    <>
+    <SidebarProvider className="h-svh">
+    <AppSidebar
+      activeSection={activeSection}
+      onSelectSection={selectSection}
+      onHelp={() => setHelp(true)}
+    />
+    <SidebarInset className="min-w-0 overflow-hidden bg-transparent">
+    <div className="app">
       {/* ---------------- centre: preview */}
       <main className="centre">
         <div className="stack">
+          <button type="button" className="new-image" onClick={() => setUploadOpen(true)}>
+            <Plus className="h-4 w-4" aria-hidden />
+            New Image
+          </button>
           <div className={compare ? "view hidden" : "view"}>
             <PreviewView ref={view} image={image} tile={tile} showTile={!beforeOn}
                          fullSize={fullSize} mode={mode} crop={st.crop} ratio={ratio()} imgAspect={imgAspect()}
@@ -1297,6 +1344,7 @@ export default function App() {
           )}
         </div>
         <div className="bar">
+          <SidebarTrigger aria-label="Toggle navigation" />
           <button onPointerDown={() => setBefore(true)} onPointerUp={() => setBefore(false)} onPointerLeave={() => setBefore(false)}
                   title="Hold to see the original (or hold \)">Hold for before ( \ )</button>
           <button onClick={resetPhoto} title={`Remove every change on this photo (${MOD}⇧R). ${MOD}Z brings them back.`}>Reset photo</button>
@@ -1310,17 +1358,28 @@ export default function App() {
           <span className="grow" />
           <span className="info">{ph?.header ? infoLine : ""}</span>
         </div>
+        <Filmstrip
+          photos={orderedPhotos()}
+          currentId={currentId}
+          selected={selected}
+          sort={sort}
+          onSort={chooseSort}
+          onPhotoClick={clickPhoto}
+          onPhotoContextMenu={(e, id) => {
+            e.preventDefault();
+            const ids = selected.has(id) ? [...selected] : [id];
+            if (!selected.has(id)) setSelected(new Set([id]));
+            setMenu({ x: e.clientX, y: e.clientY, ids });
+          }}
+          onRate={ratePhoto}
+        />
       </main>
 
       {/* ---------------- right: controls */}
       <aside className="right">
-        <div className="tabs">
-          <button className={panelTab === "photos" ? "on" : ""} onClick={() => setPanelTab("photos")}>Photos</button>
-          <button className={panelTab === "edit" ? "on" : ""} onClick={() => setPanelTab("edit")}>Develop</button>
-        </div>
         <HistogramView hist={hist} />
-        <div className="panel">
-          <Section title="Film stock" onReset={sec("Film stock")}>
+        <div className="panel" ref={panelRef}>
+          <Section id="film-stock" title="Film stock" onReset={sec("Film stock")}>
             <div className="filters">
               {([["all", "All"], ["Kodak", "Kodak"], ["Fujifilm", "Fujifilm"], ["CineStill", "CineStill"], ["bw", "B&W"]] as [Filter, string][]).map(([k, l]) => (
                 <button key={k} className={prefs.filter === k ? "chip on" : "chip"} onClick={() => { setPrefs({ filter: k }); R.current.thumbKey = ""; later("thumbs", 50, renderStockThumbs); }}>{l}</button>
@@ -1334,7 +1393,7 @@ export default function App() {
             {sl("Film strength", "strength", 0, 100, { suffix: " %" })}
           </Section>
 
-          <Section title="Exposure" onReset={sec("Exposure")}>
+          <Section id="exposure" title="Exposure" onReset={sec("Exposure")}>
             <label className="check"><input type="checkbox" checked={st.auto_meter} onChange={(e) => set("auto_meter", e.target.checked)} /> Auto-meter RAW files (like a film camera)</label>
             {sl("Exposure", "exposure", -4, 4, { step: 0.05, decimals: 2, suffix: " EV" })}
             {sl("Push / pull", "push", -2, 2, { step: 0.5, decimals: 1, suffix: " stops" })}
@@ -1343,7 +1402,7 @@ export default function App() {
             {sl("Contrast", "contrast", -100, 100)}
           </Section>
 
-          <Section title="White balance" onReset={sec("White balance")}>
+          <Section id="white-balance" title="White balance" onReset={sec("White balance")}>
             <div className="row">
               <Select value={wbPresetName()} options={[...Object.keys(info.wb_presets).map((k) => [k, k] as [string, string]), ["Custom", "Custom"]]}
                       onChange={(k) => {
@@ -1359,7 +1418,7 @@ export default function App() {
             <p className="note">Set as light hitting the film — the stock still adds its own colour.</p>
           </Section>
 
-          <Section title="Colour & lab" onReset={sec("Colour & lab")}>
+          <Section id="colour-lab" title="Colour & lab" onReset={sec("Colour & lab")}>
             <Labeled label="Process">
               <Select value={st.lab ?? stock.default_lab} options={info.labs.map((k) => [k, info.lab_labels[k]] as [string, string])}
                       disabled={stock.kind === "rev" || stock.id === "neutral"}
@@ -1371,13 +1430,13 @@ export default function App() {
             {sl("Fade", "fade", 0, 100)}
           </Section>
 
-          <Section title="Skin tones" onReset={sec("Skin tones")}>
+          <Section id="skin-tones" title="Skin tones" onReset={sec("Skin tones")}>
             {sl("Skin warmth  (rosy ↔ golden)", "skin_warmth", -100, 100)}
             {sl("Skin saturation", "skin_saturation", -100, 100)}
             <p className="note">Only affects skin — works for every complexion.</p>
           </Section>
 
-          <Section title="Tone curve" onReset={sec("Tone curve")}>
+          <Section id="tone-curve" title="Tone curve" onReset={sec("Tone curve")}>
             <div className="seg">
               {(["rgb", "r", "g", "b"] as Channel[]).map((c) => (
                 <button key={c} className={channel === c ? "on" : ""} onClick={() => setChannel(c)}>{{ rgb: "RGB", r: "Red", g: "Green", b: "Blue" }[c]}</button>
@@ -1391,7 +1450,7 @@ export default function App() {
             <p className="note">Click to add a point · drag to move · double-click a point to remove</p>
           </Section>
 
-          <Section title="Crop" onReset={sec("Crop")}>
+          <Section id="crop" title="Crop" onReset={sec("Crop")}>
             <Labeled label="Aspect">
               <Select value={st.aspect} options={info.aspects.map((k) => [k, info.aspect_labels[k]] as [string, string])}
                       onChange={(k) => { aspectFlip.current = false; applyRatio(k); }} />
@@ -1403,7 +1462,7 @@ export default function App() {
             </div>
           </Section>
 
-          <Section title="Grain" onReset={sec("Grain")}>
+          <Section id="grain" title="Grain" onReset={sec("Grain")}>
             <Swatch ref={swatchView} image={swatch} onDrag={swatchDragged} onRelease={swatchReleased} />
             <div className="swatch-caption">{swatchCaption}</div>
             <div className="filters even">
@@ -1423,13 +1482,13 @@ export default function App() {
             <button className="wide" onClick={reseed}>New grain pattern</button>
           </Section>
 
-          <Section title="Light" onReset={sec("Light")}>
+          <Section id="light" title="Light" onReset={sec("Light")}>
             {sl("Halation", "halation", 0, 100, { value: st.halation ?? stock.halation, def: stock.halation })}
             {sl("Bloom", "bloom", 0, 100, { value: st.bloom ?? stock.bloom, def: stock.bloom })}
             {sl("Vignette", "vignette", -100, 100)}
           </Section>
 
-          <Section title="Light leaks" onReset={sec("Light leaks")}>
+          <Section id="light-leaks" title="Light leaks" onReset={sec("Light leaks")}>
             <Labeled label="Style">
               <Select value={st.leak} options={info.leaks.map((k) => [k, info.leak_labels[k]] as [string, string])} onChange={(v) => set("leak", v)} />
             </Labeled>
@@ -1437,7 +1496,7 @@ export default function App() {
             <button className="wide" onClick={shuffleLeak}>Shuffle leak</button>
           </Section>
 
-          <Section title="Dust, scratches & texture" onReset={sec("Dust, scratches & texture")}>
+          <Section id="dust" title="Dust, scratches & texture" onReset={sec("Dust, scratches & texture")}>
             {sl("Dust", "dust", 0, 100)}
             {sl("Scratches", "scratches", 0, 100)}
             <Labeled label="Texture">
@@ -1447,13 +1506,13 @@ export default function App() {
             <button className="wide" onClick={reseed}>Shuffle dust & scratches</button>
           </Section>
 
-          <Section title="Frame & border" onReset={sec("Frame & border")}>
+          <Section id="frame" title="Frame & border" onReset={sec("Frame & border")}>
             <Labeled label="Border">
               <Select value={st.border} options={info.borders.map((k) => [k, info.border_labels[k]] as [string, string])} onChange={(v) => set("border", v)} />
             </Labeled>
           </Section>
 
-          <Section title="Your looks">
+          <Section id="looks" title="Your looks">
             <div className="row">
               <Select value={presetSel} options={[["", "Choose a saved look…"], ...Object.keys(presets).sort().map((k) => [k, k] as [string, string])]}
                       onChange={applyPreset} />
@@ -1468,7 +1527,7 @@ export default function App() {
             </div>
           </Section>
 
-          <Section title="Export">
+          <Section id="export" title="Export">
             <Labeled label="Format">
               <Select value={prefs.format} options={FORMATS} onChange={(v) => setPrefs({ format: v })} />
             </Labeled>
@@ -1530,6 +1589,7 @@ export default function App() {
                   [`${MOD}E / ${MOD}⇧E`, "Export this / selected"],
                   [`${MOD}S`, "Save again to the last export folder"],
                   ["← →", "Previous / next photo"],
+                  ["1–5", "Rate the current photo (click the same number again to clear)"],
                   ["Esc / Enter", "Leave crop or eyedropper"],
                 ].map(([k, v]) => <tr key={k}><td className="kbd">{k}</td><td>{v}</td></tr>)}
               </tbody>
@@ -1540,5 +1600,15 @@ export default function App() {
         </div>
       )}
     </div>
+    </SidebarInset>
+    </SidebarProvider>
+    {uploadOpen && info && (
+      <DevelopUpload
+        first={!photos.current.length}
+        onDevelop={(files) => { void addFiles(files).then(() => setUploadOpen(false)); }}
+        onBack={photos.current.length ? () => setUploadOpen(false) : undefined}
+      />
+    )}
+    </>
   );
 }

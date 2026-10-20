@@ -13,6 +13,8 @@ export type StoredPhoto = {
   settings: Settings | null;
   thumb: Blob | null;
   added: number;
+  /** 0 means unrated. 1–5 is a star rating. */
+  rating?: number;
 };
 
 const DB = "grainhause";

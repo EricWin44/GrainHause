@@ -1,0 +1,143 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* shadcn tokens. --accent stays GrainHause's text colour; UI hover uses --ui-accent. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--ui-accent);
+  --color-accent-foreground: var(--ui-accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --background: #0c0c0e;
+  --foreground: #e8e9ec;
+  --card: #141417;
+  --card-foreground: #e8e9ec;
+  --popover: #18181c;
+  --popover-foreground: #e8e9ec;
+  --primary: oklch(0.65 0.13 35);
+  --primary-foreground: oklch(0.145 0 0);
+  --destructive-foreground: oklch(0.637 0.237 25.331);
+  --secondary: #18181c;
+  --secondary-foreground: #e8e9ec;
+  --muted: #18181c;
+  --muted-foreground: #8d929b;
+  --ui-accent: #22242a;
+  --ui-accent-foreground: #f2f3f5;
+  --destructive: #c45c52;
+  --border: #2a2b30;
+  --input: #2a2b30;
+  --ring: #9ea3ab;
+  --radius: 0.5rem;
+  --sidebar: #0c0c0e;
+  --sidebar-foreground: #e8e9ec;
+  --sidebar-primary: #e4e7ec;
+  --sidebar-primary-foreground: #0b0b0c;
+  --sidebar-accent: #18181c;
+  --sidebar-accent-foreground: #f2f3f5;
+  --sidebar-border: #2a2b30;
+  --sidebar-ring: #9ea3ab;
+}
+
+/* ------------------------------------------------------------ sign-in / marketing animations */
+@keyframes fadeSlideIn {
+  from { opacity: 0; filter: blur(4px); transform: translateY(10px); }
+  to { opacity: 1; filter: blur(0px); transform: translateY(0px); }
+}
+
+@keyframes slideRightIn {
+  from { opacity: 0; filter: blur(4px); transform: translateX(16px); }
+  to { opacity: 1; filter: blur(0px); transform: translateX(0px); }
+}
+
+@keyframes testimonialIn {
+  from { opacity: 0; filter: blur(4px); transform: translateY(10px) scale(0.96); }
+  to { opacity: 1; filter: blur(0px); transform: translateY(0px) scale(1); }
+}
+
+.font-geist { font-family: inherit; }
+
+.animate-element {
+  opacity: 0;
+  animation: fadeSlideIn 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.animate-slide-right {
+  opacity: 0;
+  animation: slideRightIn 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.animate-testimonial {
+  opacity: 0;
+  animation: testimonialIn 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.animate-delay-100 { animation-delay: 0.1s; }
+.animate-delay-200 { animation-delay: 0.2s; }
+.animate-delay-300 { animation-delay: 0.3s; }
+.animate-delay-400 { animation-delay: 0.4s; }
+.animate-delay-500 { animation-delay: 0.5s; }
+.animate-delay-600 { animation-delay: 0.6s; }
+.animate-delay-700 { animation-delay: 0.7s; }
+.animate-delay-800 { animation-delay: 0.8s; }
+.animate-delay-900 { animation-delay: 0.9s; }
+.animate-delay-1000 { animation-delay: 1s; }
+.animate-delay-1200 { animation-delay: 1.2s; }
+.animate-delay-1400 { animation-delay: 1.4s; }
+
+.custom-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  flex: 0 0 auto;
+}
+.custom-checkbox:checked {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.custom-checkbox:checked::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--primary-foreground);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* Marketing/auth pages scroll normally; the editor keeps the app shell fixed. */
+body.gh-marketing { overflow: auto auto; }
+body.gh-marketing #root { height: auto; min-height: 100%; }
